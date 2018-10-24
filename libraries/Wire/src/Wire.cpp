@@ -31,6 +31,9 @@ extern "C" {
 #include "esp32-hal-i2c.h"
 #include "Wire.h"
 #include "Arduino.h"
+#include <Task_Mesg.h>
+
+#define ENABLE_WIRE_SPINLOCK    1
 
 TwoWire::TwoWire(uint8_t bus_num)
     :num(bus_num & 1)
@@ -142,6 +145,12 @@ i2c_err_t TwoWire::readTransmission(uint16_t address, uint8_t *buff, uint16_t si
 
 void TwoWire::beginTransmission(uint16_t address)
 {
+#if ENABLE_WIRE_SPINLOCK
+    //enter critical
+    // taskENTER_CRITICAL(&spinlockMUX);
+    Task_Mesg.Suspend_Others_AppsTask();
+#endif
+
     transmitting = 1;
     txAddress = address;
     txIndex = txQueued; // allow multiple beginTransmission(),write(),endTransmission(false) until endTransmission(true)
@@ -170,6 +179,14 @@ uint8_t TwoWire::endTransmission(bool sendStop)  // Assumes Wire.beginTransactio
     txIndex = 0;
     txLength = 0;
     transmitting = 0;
+    
+#if ENABLE_WIRE_SPINLOCK
+    if ( (ret != I2C_ERROR_OK) | (sendStop == true) ){
+        //exit critical
+        // taskEXIT_CRITICAL(&spinlockMUX);
+        Task_Mesg.Resume_Others_AppsTask();
+    }
+#endif
     return last_error;
 }
 
@@ -230,6 +247,14 @@ size_t TwoWire::write(const uint8_t *data, size_t quantity)
 int TwoWire::available(void)
 {
     int result = rxLength - rxIndex;
+    
+#if ENABLE_WIRE_SPINLOCK
+    if(result == 0){
+        //exit critical
+        // taskEXIT_CRITICAL(&spinlockMUX);
+        Task_Mesg.Resume_Others_AppsTask();
+    }
+#endif
     return result;
 }
 
